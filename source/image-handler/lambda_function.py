@@ -42,6 +42,13 @@ from thumbor.console import get_server_parameters
 from thumbor.context import ServerParameters
 from thumbor.server import *
 
+
+DUMMY_PNG_64 = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00@\x00\x00\x00@\x08\x02\x00\x00\x00%\x0b\xe6\x89\x00"+\
+               b"\x00\x00\tpHYs\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a\x9c\x18\x00\x00\x00MIDATh\xde\xed"+\
+               b"\xcfA\r\x00\x00\x08\x04 \xb5\x7f\xe73\x85\x0f7h@'\xa9\xcf\xa6\x9e\x13\x10\x10\x10\x10\x10\x10"+\
+               b"\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10"+\
+               b"\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\xb8\xb7r\xaa\x03}^\xd9c\x9e\x00\x00\x00\x00IEND\xaeB`\x82"
+
 thumbor_config_path = '/var/task/image_handler/thumbor.conf'
 thumbor_socket = '/tmp/thumbor'
 unix_path = 'http+unix://%2Ftmp%2Fthumbor'
@@ -124,7 +131,7 @@ def start_thumbor():
             run_server(application, thumbor_context)
             tornado.ioloop.IOLoop.instance().start()
             logging.info(
-                        'thumbor running at %s:%d' %
+                        'yeah! thumbor running at %s:%d' %
                         (thumbor_context.server.ip, thumbor_context.server.port)
                         )
             return config
@@ -181,6 +188,7 @@ def is_thumbor_down():
      if not os.path.exists(thumbor_socket):
          start_server()
      session = requests_unixsocket.Session()
+
      http_health = '/healthcheck'
      retries = 10
      while(retries > 0):
@@ -208,14 +216,29 @@ def request_thumbor(original_request, session):
     http_path = allow_unsafe_url(http_path)
     request_headers = {}
     vary, request_headers = auto_webp(original_request, request_headers)
-    return session.get(unix_path + http_path, headers=request_headers), vary
+    resp = session.get(unix_path + http_path, headers=request_headers)
+    return resp, vary
 
 
 def process_thumbor_responde(thumbor_response, vary):
+     logging.warning('entered process response')
      if thumbor_response.status_code != 200:
-         return response_formater(status_code=thumbor_response.status_code)
+         dummy_png = DUMMY_PNG_64
+         logging.warning('returning dummy png')
+         content_type = 'image/png'
+         body = gen_body(content_type, dummy_png)
+         return response_formater(status_code='200',
+                                  body=body,
+                                  cache_control=thumbor_response.headers.get('Cache-Control', ''),
+                                  content_type=content_type,
+                                  expires=thumbor_response.headers.get('Expires', ''),
+                                  etag=thumbor_response.headers.get('Etag', ''),
+                                  date=thumbor_response.headers.get('Date', ''),
+                                  vary=(vary or '')
+                                  )
      if vary:
          vary = thumbor_response.headers['vary']
+
      content_type = thumbor_response.headers['content-type']
      body = gen_body(content_type, thumbor_response.content)
      if body is None:
@@ -272,7 +295,7 @@ def lambda_handler(event, context):
                                 'WARNING', 'ERROR',
                                 'CRITICAL'
                             ]:
-            log_level = 'ERROR'
+            log_level = 'DEBUG' # !!
         logging.getLogger().setLevel(log_level)
         if event['requestContext']['httpMethod'] != 'GET' and\
            event['requestContext']['httpMethod'] != 'HEAD':
